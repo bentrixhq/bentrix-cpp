@@ -1,7 +1,7 @@
 /*
- * walk.c - BENTRIX's engine from C, through bentrix.h: the CI tape made, a session opened, the
+ * walk.c - Bentrix's engine from C, through bentrix.h: the CI tape made, a session opened, the
  * workbench armed and advanced thirty hours as Play would, a market order filled, the book read.
- * Exit 0 when every step held; the failing step and BENTRIX's words otherwise.
+ * Exit 0 when every step held; the failing step and Bentrix's words otherwise.
  *
  *   cc -I crates/bentrix-ffi/include sdk/c/walk.c -L <target>/debug -lbentrix -o walk
  *   LD_LIBRARY_PATH=<target>/debug ./walk <empty directory>
@@ -17,7 +17,7 @@ static int fail(const char *step) {
     return 1;
 }
 
-/* The text after "key":" up to the next quote - enough for a URI in BENTRIX's own JSON. */
+/* The text after "key":" up to the next quote - enough for a URI in Bentrix's own JSON. */
 static int field(const char *json, const char *key, char *out, size_t n) {
     char needle[64];
     snprintf(needle, sizeof needle, "\"%s\":\"", key);
@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
     printf("bentrix %s\n", bx_version());
     char *ws, *store;
     if (bx_make_tape(argv[1], &ws, &store) != 0) return fail("bx_make_tape");
-    BxSession *s = bx_open(ws, store);
+    BxSession *s = bx_open(ws, store, "C");
     if (!s) return fail("bx_open");
     char *state = bx_call(s, "get_state", NULL);
     if (!state) return fail("get_state");

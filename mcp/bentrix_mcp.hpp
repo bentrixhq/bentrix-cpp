@@ -1,4 +1,4 @@
-// bentrix_mcp.hpp - the hand-written half of BENTRIX's MCP client for C++17: the connection and everything
+// bentrix_mcp.hpp - the hand-written half of Bentrix's MCP client for C++17: the connection and everything
 // that does not change when a capability is added (bentrix_mcp_generated.hpp is the rest, from the
 // capability catalogue). Header-only, no dependency: the endpoint is always http://127.0.0.1:<port> and
 // the server answers one request per connection and closes it, so HTTP is the platform's own sockets
@@ -61,7 +61,7 @@ inline constexpr int64_t BUSY = -40001;
 inline constexpr int BUSY_RETRIES = 10;
 inline constexpr int64_t BUSY_WAIT_MAX_MS = 5000;
 
-/// A refusal or a failure, in BENTRIX's own words.
+/// A refusal or a failure, in Bentrix's own words.
 struct Error : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
@@ -125,17 +125,25 @@ struct Json {
     bool is_number() const { return std::holds_alternative<int64_t>(v) || std::holds_alternative<double>(v); }
     double num() const { return std::holds_alternative<int64_t>(v) ? double(std::get<int64_t>(v)) : std::get<double>(v); }
     bool boolean() const { return std::get<bool>(v); }
-    const std::string &str() const { return std::get<std::string>(v); }
-    const Array &arr() const { return std::get<Array>(v); }
-    const Object &obj() const { return std::get<Object>(v); }
+    // **A value read off a temporary is the value, never a reference into it.** Every Bench member answers a Json by
+    // value, so `for (const auto &d : bench.deals().arr())` and `bench.account()["currency"].str()` read a temporary:
+    // on a kept Json these hand a reference, on a temporary they hand what was there, moved out, so nothing dangles.
+    const std::string &str() const & { return std::get<std::string>(v); }
+    std::string str() && { return std::move(std::get<std::string>(v)); }
+    const Array &arr() const & { return std::get<Array>(v); }
+    Array arr() && { return std::move(std::get<Array>(v)); }
+    const Object &obj() const & { return std::get<Object>(v); }
+    Object obj() && { return std::move(std::get<Object>(v)); }
     bool has(const std::string &k) const { return is_object() && obj().count(k) > 0; }
-    const Json &operator[](const std::string &k) const {
+    const Json &operator[](const std::string &k) const & {
         static const Json none;
         if (!is_object()) return none;
         auto it = obj().find(k);
         return it == obj().end() ? none : it->second;
     }
-    const Json &operator[](size_t i) const { return arr().at(i); }
+    Json operator[](const std::string &k) && { return static_cast<const Json &>(*this)[k]; }
+    const Json &operator[](size_t i) const & { return arr().at(i); }
+    Json operator[](size_t i) && { return static_cast<const Json &>(*this)[i]; }
     bool operator==(const Json &o) const { return v == o.v; }
     bool operator!=(const Json &o) const { return !(*this == o); }
 
@@ -453,8 +461,27 @@ inline std::string scalar(const Json &v) {
     return v.dump();
 }
 
+/// A workbench's address stands for its three parts: `bench` given as a
+/// `bentrix://<home>/<owner>/bench/<name>` address fills `home`, `owner` and `bench`. Parts given as before are left
+/// as they are.
+inline Json from_address(const Json &vars) {
+    const Json &b = vars["bench"];
+    const std::string scheme = "bentrix://";
+    if (!vars.is_object() || !b.is_string() || b.str().rfind(scheme, 0) != 0) return vars;
+    std::vector<std::string> parts;
+    std::istringstream in(b.str().substr(scheme.size()));
+    for (std::string p; std::getline(in, p, '/');) parts.push_back(p);
+    if (parts.size() < 4 || parts[2] != "bench") return vars;
+    Object o = vars.obj();
+    o["home"] = Json(parts[0]);
+    o["owner"] = Json(parts[1]);
+    o["bench"] = Json(parts[3]);
+    return Json(std::move(o));
+}
+
 /// The RFC 6570 subset the catalogue uses: {name} and {?a,b}. A null optional is left out.
-inline std::string expand_template(const std::string &tpl, const Json &vars) {
+inline std::string expand_template(const std::string &tpl, const Json &given) {
+    const Json vars = from_address(given);
     std::string out;
     size_t i = 0;
     while (i < tpl.size()) {
@@ -532,7 +559,7 @@ class Job {
     Json result_;
 };
 
-/// One BENTRIX endpoint. Extended by the generated Bentrix.
+/// One Bentrix endpoint. Extended by the generated Bentrix.
 class Client {
   public:
     Client(std::string url, std::string token, std::string catalogue_version) : url_(std::move(url)), token_(std::move(token)), catalogue_version_(std::move(catalogue_version)) {}
@@ -699,7 +726,7 @@ inline Json Job::wait(double timeout_s, double poll_s) {
 
 // ---- finding the running application, and pairing with it ------------------------------------------
 
-/// The folder BENTRIX writes its endpoint and secret into - user_dir(Data, "agents"), as the application has it.
+/// The folder Bentrix writes its endpoint and secret into - user_dir(Data, "agents"), as the application has it.
 inline std::string agents_dir() {
     const char *lad = std::getenv("LOCALAPPDATA");
     if (lad && *lad) return std::string(lad) + "/BENTRIX/agents";

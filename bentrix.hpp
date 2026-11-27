@@ -1,6 +1,6 @@
-// bentrix.hpp - BENTRIX for C++17: the engine in your own process through its C ABI (bentrix.h), with
-// RAII, exceptions in BENTRIX's own words, a small dependency-free JSON value, and the Gym as a client
-// of BENTRIX's own environment (env_make, env_reset, env_step) - the one every language reaches.
+// bentrix.hpp - Bentrix for C++17: the engine in your own process through its C ABI (bentrix.h), with
+// RAII, exceptions in Bentrix's own words, a small dependency-free JSON value, and the Gym as a client
+// of Bentrix's own environment (env_make, env_reset, env_step) - the one every language reaches.
 //
 //   #include "bentrix.hpp"     // with crates/bentrix-ffi/include on the include path
 //   link: -lbentrix
@@ -20,7 +20,7 @@
 
 namespace bentrix {
 
-/// A refusal or a failure, in BENTRIX's own words.
+/// A refusal or a failure, in Bentrix's own words.
 struct Error : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
@@ -49,16 +49,24 @@ struct Json {
     bool is_null() const { return std::holds_alternative<std::nullptr_t>(v); }
     double num() const { return std::get<double>(v); }
     bool boolean() const { return std::get<bool>(v); }
-    const std::string &str() const { return std::get<std::string>(v); }
-    const Array &arr() const { return std::get<Array>(v); }
-    const Object &obj() const { return std::get<Object>(v); }
-    const Json &operator[](const std::string &k) const {
+    // A value read off a temporary is the value, never a reference into it: `for (const auto &p :
+    // local.call(...)["positions"].arr())` reads an answer nobody kept, so on a kept Json these hand a reference and
+    // on a temporary what was there, moved out - nothing dangles.
+    const std::string &str() const & { return std::get<std::string>(v); }
+    std::string str() && { return std::move(std::get<std::string>(v)); }
+    const Array &arr() const & { return std::get<Array>(v); }
+    Array arr() && { return std::move(std::get<Array>(v)); }
+    const Object &obj() const & { return std::get<Object>(v); }
+    Object obj() && { return std::move(std::get<Object>(v)); }
+    const Json &operator[](const std::string &k) const & {
         static const Json none;
         auto &o = obj();
         auto it = o.find(k);
         return it == o.end() ? none : it->second;
     }
-    const Json &operator[](size_t i) const { return arr().at(i); }
+    Json operator[](const std::string &k) && { return static_cast<const Json &>(*this)[k]; }
+    const Json &operator[](size_t i) const & { return arr().at(i); }
+    Json operator[](size_t i) && { return static_cast<const Json &>(*this)[i]; }
 
     static Json parse(const std::string &text) {
         size_t i = 0;
@@ -164,18 +172,32 @@ struct Json {
 
 // ---- the engine -------------------------------------------------------------------------------------
 
-/// An embedded BENTRIX over a workspace and its recordings; closed when it goes out of scope.
+/// An embedded Bentrix over a workspace and its recordings; closed when it goes out of scope.
 class Local {
   public:
     /// Open `workspace` (yours when empty) and its recordings (yours when empty).
     explicit Local(const std::string &workspace = "", const std::string &store = "")
-        : s_(bx_open(workspace.empty() ? nullptr : workspace.c_str(), store.empty() ? nullptr : store.c_str()), bx_close) {
+        : s_((refuse_another_interface(), bx_open(workspace.empty() ? nullptr : workspace.c_str(), store.empty() ? nullptr : store.c_str(), "C++")), bx_close) {
         if (!s_) throw Error(bx_last_error());
     }
 
+    /// **The engine's interface this package speaks** (`bx_abi`): a library
+    /// of another one is refused before `bx_open`, in a sentence naming both. A library from before `bx_abi`
+    /// (0.1.382) does not link with this header at all.
+    static constexpr std::uint32_t abi = BX_ABI;
+    static void refuse_another_interface() {
+        const std::uint32_t have = bx_abi();
+        if (have == abi) return;
+        throw Error("Bentrix's engine library speaks interface " + std::to_string(have) + " (Bentrix " + bx_version() +
+                    ") and this package speaks " + std::to_string(abi) + ": " + (have < abi ? "update Bentrix" : "update this package") + ".");
+    }
+
     /// One tool by name, its arguments as JSON text (empty: none); its answer.
-    Json call(const std::string &tool, const std::string &args_json = "") {
-        return Json::parse(take(bx_call(s_.get(), tool.c_str(), args_json.empty() ? nullptr : args_json.c_str())));
+    Json call(const std::string &tool, const std::string &args_json = "") { return Json::parse(call_text(tool, args_json)); }
+    /// `call`'s answer as the text the engine wrote: what a client reads with its own JSON (the workbench object's
+    /// engine door, `mcp/bentrix_engine_door.hpp`).
+    std::string call_text(const std::string &tool, const std::string &args_json = "") {
+        return take(bx_call(s_.get(), tool.c_str(), args_json.empty() ? nullptr : args_json.c_str()));
     }
     /// One resource by its catalogue name, its template's variables as JSON text.
     Json read(const std::string &resource, const std::string &vars_json = "") {
@@ -219,7 +241,10 @@ class TradingEnv {
         } catch (...) {
         }
     }
+    /// A new episode from `seed`: the draws start over.
     Json reset(long long seed) { return local_.call("env_reset", "{\"env\":\"" + id_ + "\",\"seed\":" + std::to_string(seed) + "}"); }
+    /// The next episode of the last seed.
+    Json reset() { return local_.call("env_reset", "{\"env\":\"" + id_ + "\"}"); }
     /// `action_json`: 0, 1 or 2; a number; or an object.
     Json step(const std::string &action_json) { return local_.call("env_step", "{\"env\":\"" + id_ + "\",\"action\":" + action_json + "}"); }
     const std::string &id() const { return id_; }

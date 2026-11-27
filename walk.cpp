@@ -50,6 +50,11 @@ int main(int argc, char **argv) {
         }
         Json book = local.read("trade_book", "{\"home\":\"" + home + "\",\"owner\":\"" + owner + "\",\"bench\":\"" + name + "\"}");
         check(book["positions"].arr().size() == 1 && book["positions"][0]["side"].str() == "buy", "the order did not fill");
+        // A value read off an answer that is not kept - the loop a person writes first: the answer is a temporary, and
+        // what is read from it must not be a reference into it.
+        size_t held = 0;
+        for (const auto &p : local.read("trade_book", "{\"home\":\"" + home + "\",\"owner\":\"" + owner + "\",\"bench\":\"" + name + "\"}")["positions"].arr()) held += p["ticket"].num() > 0 ? 1 : 0;
+        check(held == 1, "the positions of an answer not kept");
         std::string said;
         try {
             local.call("no_such_tool");
@@ -74,6 +79,9 @@ int main(int argc, char **argv) {
                 hashes.push_back(s["info"]["ledger_hash"].str());
                 if (s["terminated"].boolean() || s["truncated"].boolean()) break;
             }
+            // The next episode of the same seed: a reset with no seed, as every binding has it. It starts elsewhere.
+            Json next = env.reset();
+            check((long long)next["info"]["start_ms"].num() != start_ms, "a reset with no seed started the first episode again");
         }
         check(std::set<std::string>(hashes.begin(), hashes.end()).size() > 1, "the episode traded nothing");
         // Every number written whole: a reward at 17 significant digits reads back as the same double.
